@@ -14,7 +14,7 @@ on:
       use_ccache:
         description: 'Use ccache? (y or n)'
         required: true
-        default: 'n'
+        default: 'y'
 
 jobs:
   build:
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
+          submodules: recursive
           fetch-depth: 0
 
       - name: Install build dependencies
@@ -34,28 +34,54 @@ jobs:
             libarchive-tools ccache bc bison flex build-essential \
             libssl-dev libncurses5-dev libelf-dev rsync wget unzip curl
 
-      - name: Show disk & mem (debug)
+      - name: Show system info
         run: |
           df -h .
           free -h
+          lscpu
+          echo "Environment Variables:"
+          env | sort
 
-      - name: Make build script runnable
+      - name: Enable ccache
+        if: ${{ github.event.inputs.use_ccache == 'y' }}
+        run: |
+          export USE_CCACHE=1
+          export CCACHE_DIR=$HOME/.ccache
+          ccache -s
+
+      - name: Make build script executable
         run: chmod +x ./build.sh
 
-      - name: Run build.sh
+      - name: Run kernel build
         run: |
-          # Force single-threaded compile to reduce memory usage on GitHub runners
+          set -eux
+          echo "Starting build for device: ${{ github.event.inputs.device }}"
+          echo "Using KernelSU: ${{ github.event.inputs.use_ksu }}"
+          echo "Using ccache: ${{ github.event.inputs.use_ccache }}"
+          
+          # Force single-threaded compile to reduce memory usage
           export MAKEFLAGS="-j1"
-          ./build.sh -m ${{ github.event.inputs.device }} -k ${{ github.event.inputs.use_ksu }} -c ${{ github.event.inputs.use_ccache }}
 
-      - name: Find and list produced artifacts
+          # Optional: redirect build output to log for debugging
+          mkdir -p build/logs
+          ./build.sh -m ${{ github.event.inputs.device }} \
+                     -k ${{ github.event.inputs.use_ksu }} \
+                     -c ${{ github.event.inputs.use_ccache }} \
+                     2>&1 | tee build/logs/build.log
+
+      - name: Tail build log
+        run: tail -n 50 build/logs/build.log || echo "No build log found"
+
+      - name: Find and copy zip artifacts
         run: |
-          echo "Looking for zip under build/out/"
-          find build/out -type f -name "*.zip" || echo "No zip found."
+          mkdir -p build/out/zip
+          find build/out -type f -name "*.zip" -exec cp {} build/out/zip/ \;
+          echo "Copied zips to build/out/zip"
+          ls -lh build/out/zip || echo "No zip found"
 
       - name: Upload kernel zip artifact
         uses: actions/upload-artifact@v4
         with:
           name: kernel-zip
-          path: build/out/**/*.zip
+          path: build/out/zip/*.zip
           retention-days: 7
