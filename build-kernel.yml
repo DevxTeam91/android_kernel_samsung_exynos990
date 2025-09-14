@@ -1,0 +1,65 @@
+name: Build ExtremeKernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device codename (e.g., x1slte)'
+        required: true
+        default: 'x1slte'
+      use_ksu:
+        description: 'Use KernelSU? (y or n)'
+        required: true
+        default: 'y'
+      use_ccache:
+        description: 'Use ccache? (y or n)'
+        required: true
+        default: 'n'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libarchive-tools ccache bc bison flex build-essential \
+            libssl-dev libncurses5-dev libelf-dev rsync wget unzip curl
+
+      - name: Show disk & mem (debug)
+        run: |
+          df -h .
+          free -h
+
+      - name: Make build script runnable
+        run: chmod +x ./build.sh
+
+      - name: Run build.sh
+        env:
+          DEVICE: ${{ github.event.inputs.device }}
+          KSU: ${{ github.event.inputs.use_ksu }}
+          CCACHE: ${{ github.event.inputs.use_ccache }}
+        run: |
+          # Force single-threaded compile to avoid OOM
+          export MAKEFLAGS="-j1"
+          ./build.sh -m "${DEVICE}" -k "${KSU}" -c "${CCACHE}"
+
+      - name: Find and list produced artifacts
+        run: |
+          echo "Looking for zip under build/out/"
+          find build/out -type f -name "*.zip" || echo "No zip found."
+
+      - name: Upload kernel zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-zip
+          path: build/out/**/*.zip
+          retention-days: 7
